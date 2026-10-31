@@ -25,7 +25,7 @@ describe("routeForBot", () => {
     expect(routeForBot(full, "Auto")?.engines).toBe(config.engines);
     const studio = routeForBot(full, "Studio")!;
     expect(studio).toMatchObject({ url: config.url, tokenEnv: "ROUTER_TOKEN", engines: full.engines.remote });
-    expect(engineForChain(["chatgpt/gpt"], studio, () => false)).toBe(remoteAcp);
+    expect(engineForChain(["chatgpt/gpt"], studio, () => false)?.selection).toBe(remoteAcp);
     expect(forcedEngine("@claude hi", studio)).toEqual({ key: "claude", text: "hi" });
     expect(forcedEngine("@gpt hi", studio)).toBeNull();
   });
@@ -48,9 +48,9 @@ describe("forcedEngine", () => {
 
 describe("engineForChain", () => {
   it("maps providers, falls back to *, and skips blocked engines", () => {
-    expect(engineForChain(["claude/sonnet", "groq/x"], config, () => false)).toBe(claude);
-    expect(engineForChain(["groq/x"], config, () => false)).toBe(acp);
-    expect(engineForChain(["claude/sonnet", "chatgpt/gpt"], config, (id) => id === "claude")).toBe(codex);
+    expect(engineForChain(["claude/sonnet", "groq/x"], config, () => false)).toEqual({ entry: "claude/sonnet", selection: claude });
+    expect(engineForChain(["groq/x"], config, () => false)).toEqual({ entry: "groq/x", selection: acp });
+    expect(engineForChain(["claude/sonnet", "chatgpt/gpt"], config, (id) => id === "claude")?.selection).toBe(codex);
   });
   it("skips unmapped providers when there is no *", () => {
     expect(engineForChain(["groq/x"], { ...config, engines: { claude } }, () => false)).toBeNull();
@@ -64,10 +64,14 @@ describe("chooseRoute", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
   it("sends the token and follows the chain", async () => {
-    const fetch = answering({ cadena: ["chatgpt/gpt-6-luna", "claude/sonnet"], ruta: "implementar", motivo: "codigo/alta" });
+    const fetch = answering({ cadena: ["chatgpt/gpt-6-luna", "claude/sonnet"], ruta: "implementar", nivel: "alta", motivo: "codigo/alta" });
     const route = await chooseRoute("write a parser", config, { blocked: () => false, fetch, env: { ROUTER_TOKEN: "t" } });
-    expect(route).toEqual({ selection: codex, text: "write a parser", why: "implementar · codigo/alta" });
+    expect(route).toEqual({ selection: codex, text: "write a parser", why: "chatgpt/gpt-6-luna · codigo/alta" });
     expect(fetch.mock.calls[0][1]).toMatchObject({ headers: { authorization: "Bearer t" } });
+  });
+  it("names the route and level when there is no reason", async () => {
+    const fetch = answering({ cadena: ["groq/llama"], ruta: "charla", nivel: "baja" });
+    expect((await chooseRoute("hi", config, { blocked: () => false, fetch }))?.why).toBe("groq/llama · charla/baja");
   });
   it("leaves the thread alone when the classifier fails", async () => {
     expect(await chooseRoute("hi", config, { blocked: () => false, fetch: answering({}, 503) })).toBeNull();

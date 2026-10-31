@@ -8,7 +8,8 @@ import type { ModelSelection } from "../shared/wire.ts";
 export type EngineMap = Record<string, ModelSelection>;
 
 export interface AutoRouteConfig {
-  /** POST endpoint answering `{ cadena: string[], ruta?: string, motivo?: string }` for an OpenAI-style `{ messages }` body;
+  /** POST endpoint answering `{ cadena: string[], ruta?: string, nivel?: string, motivo?: string }` (`motivo` already says
+   * the route and level; they stand in when it is missing) for an OpenAI-style `{ messages }` body;
    * each chain entry is `provider/model`, best first. */
   url: string;
   /** Environment variable holding the bearer token; the token itself never sits in config.json. */
@@ -45,11 +46,11 @@ export function forcedEngine(text: string, config: BotRoute): { key: string; tex
   return key && config.engines[key] ? { key, text: text.slice(match[0].length) } : null;
 }
 
-/** The first chain entry whose engine is not blocked, as a selection; entries that map to the same engine count once. */
-export function engineForChain(chain: string[], config: BotRoute, blocked: (instanceId: string) => boolean): ModelSelection | null {
+/** The first chain entry whose engine is not blocked, with that engine; entries that map to the same engine count once. */
+export function engineForChain(chain: string[], config: BotRoute, blocked: (instanceId: string) => boolean): { entry: string; selection: ModelSelection } | null {
   for (const entry of chain) {
     const selection = config.engines[entry.split("/")[0]] ?? config.engines["*"];
-    if (selection && !blocked(selection.instanceId)) return selection;
+    if (selection && !blocked(selection.instanceId)) return { entry, selection };
   }
   return null;
 }
@@ -71,11 +72,14 @@ export async function chooseRoute(text: string, config: BotRoute, deps: {
       signal: AbortSignal.timeout(config.timeoutMs ?? 10_000),
     });
     if (!response.ok) return null;
-    const answer = await response.json() as { cadena?: unknown; ruta?: unknown; motivo?: unknown };
+    const answer = await response.json() as { cadena?: unknown; ruta?: unknown; nivel?: unknown; motivo?: unknown };
     if (!Array.isArray(answer.cadena)) return null;
-    const selection = engineForChain(answer.cadena.filter((entry) => typeof entry === "string"), config, deps.blocked);
-    const why = [answer.ruta, answer.motivo].filter((part) => typeof part === "string" && part).join(" · ");
-    return selection ? { selection, text, why } : null;
+    const picked = engineForChain(answer.cadena.filter((entry) => typeof entry === "string"), config, deps.blocked);
+    // The picked entry names the model even when the engine is a router (`agent-default`) that resolves it itself.
+    const str = (part: unknown) => typeof part === "string" && part ? part : "";
+    const why = [picked?.entry, str(answer.motivo) || [answer.ruta, answer.nivel].map(str).filter(Boolean).join("/")]
+      .filter(Boolean).join(" · ");
+    return picked ? { selection: picked.selection, text, why } : null;
   } catch {
     return null;
   }
