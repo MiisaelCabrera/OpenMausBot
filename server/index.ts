@@ -2727,14 +2727,19 @@ async function autoRouteTurn(profile: BotRecord, threadId: string, text: string)
   const current = route && store.projectBotForTask(profile.id, threadId);
   if (!route || !current) return route?.text ?? text;
   const { instanceId, model } = current.modelSelection;
-  if (route.selection.instanceId === instanceId && route.selection.model === model) return route.text;
+  const why = route.why ? ` · ${route.why}` : "";
+  // Every routed turn says where it went, staying put included: under a router engine the model can change turn to turn.
+  if (route.selection.instanceId === instanceId && route.selection.model === model) {
+    store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: `notice: ▶ ${engineName(instanceId)} · ${model}${why}`, ok: true } });
+    return route.text;
+  }
   const checked = threadBusy(profile.id, threadId) ? { ok: false as const, error: "thread busy" }
     : checkedTaskModelSwitch(current, route.selection, false, false, true);
   const moved = checked.ok && store.switchTaskModel(profile.id, threadId, checked.selection, false, false,
     hostedModels?.resetTask(current.modelSelection, checked.selection));
   store.appendMessage(threadId, { role: "bot", kind: "activity", tool: {
-    name: checked.ok && moved ? `notice: ▶ ${engineName(checked.selection.instanceId)} · ${checked.selection.model}${route.why ? ` · ${route.why}` : ""}`
-      : `notice: Auto route stayed on ${engineName(instanceId)} (${checked.ok ? "switch refused" : checked.error})`,
+    name: checked.ok && moved ? `notice: ▶ ${engineName(checked.selection.instanceId)} · ${checked.selection.model}${why}`
+      : `notice: Auto route stayed on ${engineName(instanceId)} (${checked.ok ? "switch refused" : checked.error})${why}`,
     ok: Boolean(moved),
   } });
   return route.text;
