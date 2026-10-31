@@ -610,6 +610,7 @@ import { createComputerPreviews } from "./computer-previews.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { createAntigravityAccountRoutes } from "./routes/antigravity-accounts.ts";
 import { createConfigRoutes } from "./routes/config.ts";
+import { chooseRoute } from "./auto-route.ts";
 import { createInstanceRoutes } from "./routes/instances.ts";
 import { createMcpServerRoutes } from "./routes/mcp-servers.ts";
 import { teamAdminSummary } from "./cloud-team-admin.ts";
@@ -2716,6 +2717,27 @@ function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefau
     return { ok: false as const, status: 409, error: "Stop work in the selected scope before switching its permissions" };
   }
   return checked;
+}
+
+/** Moves an auto-routed bot's thread to the engine its classifier (or a leading `@alias`) picks; returns the turn's text. */
+async function autoRouteTurn(profile: BotRecord, threadId: string, text: string): Promise<string> {
+  const config = cfg.autoRoute;
+  if (!config?.bots.includes(profile.name)) return text;
+  const route = await chooseRoute(text, config, { blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled });
+  const current = route && store.projectBotForTask(profile.id, threadId);
+  if (!route || !current) return route?.text ?? text;
+  const { instanceId, model } = current.modelSelection;
+  if (route.selection.instanceId === instanceId && route.selection.model === model) return route.text;
+  const checked = threadBusy(profile.id, threadId) ? { ok: false as const, error: "thread busy" }
+    : checkedTaskModelSwitch(current, route.selection, false, false, true);
+  const moved = checked.ok && store.switchTaskModel(profile.id, threadId, checked.selection, false, false,
+    hostedModels?.resetTask(current.modelSelection, checked.selection));
+  store.appendMessage(threadId, { role: "bot", kind: "activity", tool: {
+    name: checked.ok && moved ? `notice: ▶ ${engineName(checked.selection.instanceId)} · ${checked.selection.model}${route.why ? ` · ${route.why}` : ""}`
+      : `notice: Auto route stayed on ${engineName(instanceId)} (${checked.ok ? "switch refused" : checked.error})`,
+    ok: Boolean(moved),
+  } });
+  return route.text;
 }
 
 function threadEngine(instanceId: string): ThreadEngine | undefined {
@@ -7710,6 +7732,8 @@ async function startTurn(
   }
   healThreadModel(botId, threadId);
   limitFailovers.restore(botId, threadId);
+  if (!opts?.commsDepth && !opts?.cardContinuation && !opts?.compactOnly && !opts?.automationSource)
+    text = await autoRouteTurn(profile, threadId, text);
   const bot = store.projectBotForTask(botId, threadId);
   if (!bot) throw Object.assign(new Error("no such task"), { status: 404 });
   if (bot.approvalGrant) {

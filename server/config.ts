@@ -26,6 +26,7 @@ import { deciderConfigSchema, type DeciderConfig } from "./decider/config.ts";
 import { browserEngineConfigSchema, isValidCdpTarget, type BrowserEngineConfig } from "./browser/config.ts";
 import { roomContextSettings } from "./room-context-settings.ts";
 import { MAX_LOCAL_VM_IDLE_TIMEOUT_MINUTES, MAX_LOCAL_VM_MAX_INSTANCES, MIN_LOCAL_VM_IDLE_TIMEOUT_MINUTES, MIN_LOCAL_VM_MAX_INSTANCES } from "./local-vm-settings.ts";
+import type { AutoRouteConfig } from "./auto-route.ts";
 export * from "./local-vm-settings.ts";
 
 const optionalText = z.string().optional();
@@ -294,6 +295,15 @@ const automaticRecoverySchema = z.object({
   backup: defaultModelSelectionSchema.optional(),
 }).strict().refine((recovery) => !recovery.enabled || recovery.backup !== undefined,
   { message: "Choose a backup model before enabling automatic recovery", path: ["backup"] });
+/** server/auto-route.ts; file-only (never patched over the API), since it decides where turns go. */
+const autoRouteSchema = z.object({
+  url: z.string().url(),
+  tokenEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
+  bots: z.array(z.string().min(1)).max(100),
+  engines: z.record(z.string(), defaultModelSelectionSchema),
+  aliases: z.record(z.string(), z.string()).optional(),
+  timeoutMs: z.number().int().min(500).max(60_000).optional(),
+}).strict();
 /** Prompt-cache keep-warm. Off unless enabled; a bot's own `cacheKeepWarm` overrides it. */
 const cacheKeepWarmSchema = z.object({
   enabled: z.boolean(),
@@ -325,6 +335,7 @@ const appConfigSchema = z.object({
   signIn: z.object({ admins: z.array(z.string().max(320)).max(500).optional(), members: z.array(z.string().max(320)).max(5000).optional() }).optional(),
   defaultModelSelection: defaultModelSelectionSchema.optional(),
   automaticRecovery: automaticRecoverySchema.optional(),
+  autoRoute: autoRouteSchema.optional(),
   cacheKeepWarm: cacheKeepWarmSchema.optional(),
   newBotDefaults: newBotDefaultsSchema.optional(),
   newBots: newBotsConfigSchema.optional(),
@@ -461,7 +472,7 @@ const storedAppConfigSchema = appConfigSchema.extend(helperStoredShape).extend({
       .optional(),
   }).optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, cliStartup: true, customDomain: true })
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, cliStartup: true, customDomain: true, autoRoute: true })
   .extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
@@ -472,6 +483,7 @@ export interface AppConfig extends HelperConfig {
   defaultModelSelection?: ModelSelection;
   /** Off by default; one backup attempt only before any work starts. */
   automaticRecovery?: { enabled: boolean; backup?: ModelSelection };
+  autoRoute?: AutoRouteConfig;
   cacheKeepWarm?: { enabled: boolean; windowMinutes?: number };
   /** UI creation template. Saving it never mutates a bot or grants access. */
   newBotDefaults?: NewBotDefaults;
