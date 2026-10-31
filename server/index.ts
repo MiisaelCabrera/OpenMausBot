@@ -610,7 +610,7 @@ import { createComputerPreviews } from "./computer-previews.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { createAntigravityAccountRoutes } from "./routes/antigravity-accounts.ts";
 import { createConfigRoutes } from "./routes/config.ts";
-import { chooseRoute } from "./auto-route.ts";
+import { chooseRoute, routeForBot } from "./auto-route.ts";
 import { createInstanceRoutes } from "./routes/instances.ts";
 import { createMcpServerRoutes } from "./routes/mcp-servers.ts";
 import { teamAdminSummary } from "./cloud-team-admin.ts";
@@ -2721,8 +2721,8 @@ function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefau
 
 /** Moves an auto-routed bot's thread to the engine its classifier (or a leading `@alias`) picks; returns the turn's text. */
 async function autoRouteTurn(profile: BotRecord, threadId: string, text: string): Promise<string> {
-  const config = cfg.autoRoute;
-  if (!config?.bots.includes(profile.name)) return text;
+  const config = routeForBot(cfg.autoRoute, profile.name);
+  if (!config) return text;
   const route = await chooseRoute(text, config, { blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled });
   const current = route && store.projectBotForTask(profile.id, threadId);
   if (!route || !current) return route?.text ?? text;

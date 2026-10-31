@@ -1,18 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { chooseRoute, engineForChain, forcedEngine, type AutoRouteConfig } from "./auto-route.ts";
+import { chooseRoute, engineForChain, forcedEngine, routeForBot, type AutoRouteConfig, type BotRoute } from "./auto-route.ts";
 
 const claude = { instanceId: "claude", model: "claude-sonnet-5" };
 const codex = { instanceId: "codex", model: "gpt-6-luna" };
 const acp = { instanceId: "orq-acp", model: "agent-default" };
-const config: AutoRouteConfig = {
+const config: BotRoute = {
   url: "http://router.test/v1/clasificar",
   tokenEnv: "ROUTER_TOKEN",
-  bots: ["Auto"],
   engines: { claude, chatgpt: codex, "*": acp },
   aliases: { claude: "claude", gpt: "chatgpt", codex: "chatgpt" },
 };
+const remoteClaude = { instanceId: "claude-remote", model: "claude-sonnet-5" };
+const remoteAcp = { instanceId: "remote", model: "agent-default" };
+const full: AutoRouteConfig = {
+  ...config,
+  bots: { Auto: "local", Studio: "remote", Infra: "remote" },
+  engines: { local: config.engines, remote: { claude: remoteClaude, "*": remoteAcp } },
+};
 const answering = (body: unknown, status = 200) => vi.fn<typeof fetch>(async () => new Response(JSON.stringify(body), { status }));
+
+describe("routeForBot", () => {
+  it("gives each bot only its own engine set", () => {
+    expect(routeForBot(full, "Auto")?.engines).toBe(config.engines);
+    const studio = routeForBot(full, "Studio")!;
+    expect(studio).toMatchObject({ url: config.url, tokenEnv: "ROUTER_TOKEN", engines: full.engines.remote });
+    expect(engineForChain(["chatgpt/gpt"], studio, () => false)).toBe(remoteAcp);
+    expect(forcedEngine("@claude hi", studio)).toEqual({ key: "claude", text: "hi" });
+    expect(forcedEngine("@gpt hi", studio)).toBeNull();
+  });
+  it("leaves other bots alone", () => {
+    expect(routeForBot(full, "Codex")).toBeNull();
+    expect(routeForBot(full, "toString")).toBeNull();
+    expect(routeForBot(undefined, "Auto")).toBeNull();
+  });
+});
 
 describe("forcedEngine", () => {
   it("takes a leading alias and strips it", () => {

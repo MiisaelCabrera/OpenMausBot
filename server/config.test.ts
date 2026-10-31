@@ -67,6 +67,12 @@ describe("configuration boundaries", () => {
       expect(() => parseConfigPatch({ automaticRecovery: invalid })).toThrow("automaticRecovery");
     }
   });
+  it("keeps auto-routed bots on a named engine set", () => {
+    const selection = { instanceId: "claude", model: "claude-sonnet-5" };
+    const autoRoute = { url: "http://router.test/v1/clasificar", bots: { Auto: "local" }, engines: { local: { "*": selection } } };
+    expect(parseStoredConfig({ autoRoute }).autoRoute).toEqual(autoRoute);
+    expect(() => parseStoredConfig({ autoRoute: { ...autoRoute, bots: { Auto: "remote" } } })).toThrow(/engine set/);
+  });
   it("accepts shared user context, including clearing, without reloading providers", () => {
     const profile = { aboutMe: "I prefer short answers.\nMy time zone is Europe/Berlin." };
     expect(parseConfigPatch({ profile })).toEqual({ profile });

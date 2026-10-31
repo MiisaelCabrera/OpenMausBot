@@ -299,11 +299,12 @@ const automaticRecoverySchema = z.object({
 const autoRouteSchema = z.object({
   url: z.string().url(),
   tokenEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
-  bots: z.array(z.string().min(1)).max(100),
-  engines: z.record(z.string(), defaultModelSelectionSchema),
+  bots: z.record(z.string().min(1), z.string()),
+  engines: z.record(z.string(), z.record(z.string(), defaultModelSelectionSchema)),
   aliases: z.record(z.string(), z.string()).optional(),
   timeoutMs: z.number().int().min(500).max(60_000).optional(),
-}).strict();
+}).strict().refine((route) => Object.values(route.bots).every((set) => Object.hasOwn(route.engines, set)),
+  { message: "Every auto-routed bot needs an engine set from autoRoute.engines", path: ["bots"] });
 /** Prompt-cache keep-warm. Off unless enabled; a bot's own `cacheKeepWarm` overrides it. */
 const cacheKeepWarmSchema = z.object({
   enabled: z.boolean(),
