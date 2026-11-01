@@ -177,6 +177,37 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
     let m: RegExpMatchArray | null = null;
     const requirePinnedClientThread = pinnedClientThread(auth, req);
     const routines = deps.routines();
+    // `/ai [-r role | -m provider/model] question`: asks the orchestrator (ORQUESTADOR_URL) directly, no agent turn; both lines stay in the thread.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/ai$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const threadId = typeof body?.threadId === "string" ? body.threadId : bot.threadId;
+      if (!store.taskByThread(bot.id, threadId)) return json(res, 404, { error: "no such conversation" });
+      const url = process.env.ORQUESTADOR_URL, token = process.env.ORQUESTADOR_TOKEN ?? process.env.ORQ_TOKEN;
+      if (!url || !token) return json(res, 503, { error: "the orchestrator isn't configured (ORQUESTADOR_URL / ORQ_TOKEN)" });
+      const asked = String(body?.text ?? "").trim();
+      const parsed = /^(?:-([rm])\s+(\S+)\s+)?([\s\S]+)$/.exec(asked);
+      if (!parsed) return json(res, 400, { error: "usage: /ai [-r role | -m provider/model] question" });
+      const [, , model = "auto", question] = parsed;
+      store.appendMessage(threadId, { role: "user", kind: "text", text: `/ai ${asked}` });
+      let answer: string;
+      try {
+        const reply = await fetch(`${url.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: question }] }), signal: AbortSignal.timeout(5 * 60_000),
+        });
+        const data = await reply.json() as { model?: string; choices?: { message?: { content?: string } }[]; error?: { message?: string } };
+        answer = reply.ok && data.choices?.[0]?.message?.content
+          ? `${data.choices[0].message.content}\n\n_▶ ${data.model ?? model} via /ai_`
+          : `/ai failed: ${data.error?.message ?? `HTTP ${reply.status}`}`;
+      } catch (error) {
+        answer = `/ai failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      store.appendMessage(threadId, { role: "bot", kind: "text", text: answer });
+      return json(res, 200, { ok: true });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages(?:\/(guarded))?$/);
     if (m && method === "POST") {
       const guarded = m[2] === "guarded";

@@ -3,6 +3,7 @@ import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowUp, Clock, Mic, Paperclip, Square, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type InstanceInfo, type Message } from "@/state/store";
+import { api } from "@/state/api";
 import { cn } from "@/lib/cn";
 import { PHONE_LAYOUT, useMediaQuery } from "@/lib/use-media-query";
 import { useMenuMotion } from "./MenuMotion";
@@ -100,6 +101,9 @@ const supportsAgents = (instances: InstanceInfo[], candidate?: Bot) =>
 interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
 }
+
+const HANDOFF_REQUEST = "Hand off this thread: bring this project's CONTEXTO.md (and the board, if it applies) up to date so the next session can resume, then reply with the follow-up prompt for the new thread in a single code block, in English: which file to read first, what task comes next, and any decision not written elsewhere.";
+const HANDOFF_FALLBACK = "Read this project's CONTEXTO.md and continue where we left off.";
 
 export function Composer({
   bot: profile,
@@ -329,6 +333,12 @@ export function Composer({
       label: "/setup",
       description: t("composer.command.setupDesc"),
     });
+    if (!group && bot) available.push(
+      { kind: "command", id: "clear", label: "/clear", description: t("composer.command.clearDesc") },
+      { kind: "command", id: "compact", label: "/compact", description: t("composer.command.compactDesc") },
+      { kind: "command", id: "handoff", label: "/handoff", description: t("composer.command.handoffDesc") },
+      { kind: "command", id: "ai", label: "/ai", description: t("composer.command.aiDesc") },
+    );
     available.push(...skillSlashCommands(slashSkills));
     return available.filter((command) => slashCommandMatches(command, slash.query));
   }, [slash, dismissedSlashAt, group, bot, canLearn, state.instances, locale, slashSkills]);
@@ -393,7 +403,7 @@ export function Composer({
   const pickCommand = (command: ComposerSlashCommand | undefined) => {
     if (!slash || !command) return;
     const replacement = command.kind === "skill" ? `${command.label} `
-      : command.id === "learn" ? "/learn " : command.id === "setup" ? "/setup " : "";
+      : command.id === "learn" ? "/learn " : command.id === "setup" ? "/setup " : command.id === "clear" ? "/clear" : command.id === "compact" ? "/compact" : command.id === "handoff" ? "/handoff" : command.id === "ai" ? "/ai " : "";
     const next = replaceComposerSlashTrigger(text, slash, replacement);
     editText(next.text);
     setCaret(next.caret);
@@ -568,8 +578,60 @@ export function Composer({
       dispatch({ type: "send", botId: bot.id, mode: failedMode, ...retry });
     }
   };
+  const [handoff, setHandoff] = useState<{ botId: string; threadId: string; sawBusy: boolean } | null>(null);
+  /** The sidebar's "new thread" for this bot, then switches to it; `seed` goes in as its first message (which also names the thread). */
+  const openFreshThread = (seed?: string) => {
+    if (!bot) return;
+    void api<{ bot?: Bot; task?: { threadId?: string } }>(`/api/bots/${bot.id}/tasks`, { method: "POST", body: "{}" })
+      .then((response) => {
+        if (!response?.bot) return;
+        dispatch({ type: "taskSwitched", bot: response.bot });
+        dispatch({ type: "select", id: bot.id });
+        if (seed && response.task?.threadId) {
+          dispatch({ type: "send", botId: bot.id, text: seed, sendId: crypto.randomUUID(), threadId: response.task.threadId, mode: "chat" });
+        }
+      })
+      .catch((error: unknown) => dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }));
+  };
+  // /handoff: once the bot's handoff turn ends, its last code block (the follow-up prompt) opens the new thread.
+  useEffect(() => {
+    if (!handoff || !bot || bot.id !== handoff.botId) return;
+    if (busy) { if (!handoff.sawBusy) setHandoff({ ...handoff, sawBusy: true }); return; }
+    if (!handoff.sawBusy) return;
+    const reply = visibleMessages(bot).findLast((message) => message.role === "bot" && message.kind === "text" && message.text);
+    const blocks = [...(reply?.text ?? "").matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
+    setHandoff(null);
+    openFreshThread(blocks.at(-1)?.[1]?.trim() || HANDOFF_FALLBACK);
+  });
   const send = () => {
     if (locked || attachmentPending) return;
+    // `/compact` summarizes the thread, `/clear` opens an empty one, `/handoff` closes with a handoff then opens one seeded with it, `/ai` asks the orchestrator.
+    if (!group && bot && attachments.length === 0 && /^\/compact$/i.test(text.trim())) {
+      editText("");
+      void api(`/api/bots/${bot.id}/compact`, { method: "POST", body: JSON.stringify({ threadId }) })
+        .catch((error: unknown) => dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }));
+      return;
+    }
+    if (!group && bot && attachments.length === 0 && /^\/clear$/i.test(text.trim())) {
+      editText("");
+      openFreshThread();
+      return;
+    }
+    if (!group && bot && attachments.length === 0 && /^\/handoff$/i.test(text.trim())) {
+      if (busy) { dispatch({ type: "error", message: "Wait for the current turn to finish before /handoff." }); return; }
+      editText("");
+      setHandoff({ botId: bot.id, threadId, sawBusy: false });
+      dispatch({ type: "send", botId: bot.id, text: HANDOFF_REQUEST, sendId: crypto.randomUUID(), threadId, mode: "chat",
+        onError: () => setHandoff(null) });
+      return;
+    }
+    const aiAsked = /^\/ai\s+([\s\S]+)$/i.exec(text.trim());
+    if (!group && bot && attachments.length === 0 && aiAsked) {
+      editText("");
+      void api(`/api/bots/${bot.id}/ai`, { method: "POST", body: JSON.stringify({ threadId, text: aiAsked[1] }) })
+        .catch((error: unknown) => dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }));
+      return;
+    }
     if (
       attachments.some((attachment) => attachment.kind === "image") &&
       !imageTargetsSupport(effectiveText, effectiveChannelMode)
