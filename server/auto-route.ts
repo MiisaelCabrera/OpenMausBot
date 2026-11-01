@@ -1,7 +1,5 @@
-// Auto route: before a person's turn, a bot named in `autoRoute.bots` asks an external classifier which engine of its
-// own set should answer and moves its thread there; a leading `@alias` forces one instead. Everything after the switch is
-// the harness's own: the thread record replays to the engine that joins mid-thread, and a usage limit falls through to the
-// bot's backups.
+// Auto route: classify recent conversation text using a route table or provider chain.
+// Leading aliases pin the thread to an engine; @auto resumes classification.
 import type { ModelSelection } from "../shared/wire.ts";
 
 /** Chain provider → engine selection. `*` takes any provider not listed; a provider with no entry and no `*` is skipped. */
@@ -20,6 +18,8 @@ export interface AutoRouteConfig {
   engines: Record<string, EngineMap>;
   /** `@alias` → a key of an engine set, e.g. `{ "claude": "claude", "gpt": "chatgpt" }`. */
   aliases?: Record<string, string>;
+  /** Classifier route → engine key; null keeps the current engine. */
+  rutas?: Record<string, string | null>;
   timeoutMs?: number;
 }
 
@@ -33,7 +33,8 @@ export function routeForBot(config: AutoRouteConfig | undefined, botName: string
 }
 
 export interface RouteChoice {
-  selection: ModelSelection;
+  selection?: ModelSelection;
+  pin?: boolean;
   /** The turn's text with a forcing `@alias` removed. */
   text: string;
   why: string;
@@ -55,32 +56,47 @@ export function engineForChain(chain: string[], config: BotRoute, blocked: (inst
   return null;
 }
 
-/** Where this turn should run, or null to leave the thread where it is (no rule, classifier down, every engine blocked). */
+/** A route or pin change; null leaves the thread and its pin unchanged. */
 export async function chooseRoute(text: string, config: BotRoute, deps: {
   blocked: (instanceId: string) => boolean;
+  pinned: boolean;
+  history?: Array<string | { role: "user" | "assistant"; content: string }>;
   fetch?: typeof fetch;
   env?: NodeJS.ProcessEnv;
 }): Promise<RouteChoice | null> {
-  const forced = forcedEngine(text, config);
-  if (forced) return { selection: config.engines[forced.key], text: forced.text, why: `@${forced.key}` };
+  const auto = /^\s*@auto\b\s*/i.exec(text);
+  if (auto) text = text.slice(auto[0].length);
+  const unchanged: RouteChoice | null = auto ? { text, why: "", pin: false } : null;
+  const forced = auto ? null : forcedEngine(text, config);
+  if (forced) return { selection: config.engines[forced.key], text: forced.text, why: `@${forced.key}`, pin: true };
+  if (deps.pinned && !auto) return null;
   const token = config.tokenEnv ? (deps.env ?? process.env)[config.tokenEnv] : undefined;
   try {
     const response = await (deps.fetch ?? fetch)(config.url, {
       method: "POST",
       headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ messages: [{ role: "user", content: text }] }),
+      body: JSON.stringify({ messages: [
+        ...(deps.history ?? []).slice(-4).map((message) => typeof message === "string"
+          ? { role: "user", content: message.slice(0, 500) }
+          : { role: message.role, content: message.content.slice(0, 500) }),
+        { role: "user", content: text.slice(0, 2000) },
+      ] }),
       signal: AbortSignal.timeout(config.timeoutMs ?? 10_000),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return unchanged;
     const answer = await response.json() as { cadena?: unknown; ruta?: unknown; nivel?: unknown; motivo?: unknown };
-    if (!Array.isArray(answer.cadena)) return null;
-    const picked = engineForChain(answer.cadena.filter((entry) => typeof entry === "string"), config, deps.blocked);
+    const mapped = typeof answer.ruta === "string" && config.rutas && Object.hasOwn(config.rutas, answer.ruta);
+    const key = mapped ? config.rutas![answer.ruta as string] : null;
+    const selection = key != null ? config.engines[key] : undefined;
+    const picked = mapped
+      ? selection && !deps.blocked(selection.instanceId) ? { entry: `${answer.ruta}→${key}`, selection } : null
+      : Array.isArray(answer.cadena) ? engineForChain(answer.cadena.filter((entry) => typeof entry === "string"), config, deps.blocked) : null;
     // The picked entry names the model even when the engine is a router (`agent-default`) that resolves it itself.
     const str = (part: unknown) => typeof part === "string" && part ? part : "";
     const why = [picked?.entry, str(answer.motivo) || [answer.ruta, answer.nivel].map(str).filter(Boolean).join("/")]
       .filter(Boolean).join(" · ");
-    return picked ? { selection: picked.selection, text, why } : null;
+    return picked ? { selection: picked.selection, text, why, ...(auto ? { pin: false } : {}) } : unchanged;
   } catch {
-    return null;
+    return unchanged;
   }
 }

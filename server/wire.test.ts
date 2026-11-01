@@ -38,6 +38,11 @@ const fullTask: TaskRecord = {
 const botModel = { instanceId: "codex", model: "bot-model" };
 
 describe("shared wire model", () => {
+  it("keeps the auto route pin server-private", () => {
+    expect(toWireTask({ ...fullTask, autoPinned: true }, botModel)).not.toHaveProperty("autoPinned");
+    expect(toWireTask({ ...fullTask, autoPinned: false }, botModel)).not.toHaveProperty("autoPinned");
+  });
+
   it("toWireTask emits exactly the WireTask key set and never the server-private fields", () => {
     const wire = toWireTask(fullTask, botModel);
     expect(Object.keys(wire).sort()).toEqual([

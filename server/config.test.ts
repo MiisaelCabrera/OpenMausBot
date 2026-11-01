@@ -73,6 +73,13 @@ describe("configuration boundaries", () => {
     expect(parseStoredConfig({ autoRoute }).autoRoute).toEqual(autoRoute);
     expect(() => parseStoredConfig({ autoRoute: { ...autoRoute, bots: { Auto: "remote" } } })).toThrow(/engine set/);
   });
+  it("accepts route table engine keys and null, rejecting other values", () => {
+    const autoRoute = { url: "http://router.test/v1/clasificar", bots: { Auto: "local" },
+      engines: { local: { claude: { instanceId: "claude", model: "claude-sonnet-5" } } },
+      rutas: { code: "claude", stay: null } };
+    expect(parseStoredConfig({ autoRoute }).autoRoute).toEqual(autoRoute);
+    expect(() => parseStoredConfig({ autoRoute: { ...autoRoute, rutas: { code: 1 } } })).toThrow();
+  });
   it("accepts shared user context, including clearing, without reloading providers", () => {
     const profile = { aboutMe: "I prefer short answers.\nMy time zone is Europe/Berlin." };
     expect(parseConfigPatch({ profile })).toEqual({ profile });

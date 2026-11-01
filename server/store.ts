@@ -80,9 +80,10 @@ export interface TaskRecord extends Omit<WireTask, TaskWireDerivedKeys> {
   surfaceSource?: "user" | "auto";
   /** Epoch ms a person last wrote here: never a teammate, routine, webhook, the bot itself or a Slack relay. */
   askedAt?: number;
+  autoPinned?: boolean;
 }
 
-export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "askedAt";
+export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "askedAt" | "autoPinned";
 export type TaskWireDerivedKeys = "surfaceAuto" | "followsBotModel";
 export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>> & Pick<WireTask, TaskWireDerivedKeys>;
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
@@ -94,7 +95,7 @@ export const taskWireProjectionIsExact: TaskWireProjectionIsExact = true;
 export function toWireTask(task: TaskRecord, botModel: ModelSelection): WireTask {
   const { resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, handedMessages: _handedMessages,
     appliedCompactionId: _appliedCompactionId, contextFloor: _contextFloor, lastContextModel: _lastContextModel,
-    surfaceSource, askedAt: _askedAt, ...stored } = task;
+    surfaceSource, askedAt: _askedAt, autoPinned: _autoPinned, ...stored } = task;
   const wire: WireTask = { ...stored, modelSelection: structuredClone(task.modelSelection ?? botModel), followsBotModel: task.modelSelection === undefined };
   return surfaceSource === "auto" && wire.surface !== undefined ? { ...wire, surfaceAuto: true } : wire;
 }
@@ -2228,6 +2229,15 @@ export class Store {
     const task = this.taskByThread(botId, threadId);
     if (!bot || !task) return null;
     this.commitBotChange(bot, "who opened the thread", () => { task.openedBy = structuredClone(openedBy); });
+    this.emit({ type: "bot", botId });
+    return task;
+  }
+
+  setTaskAutoPinned(botId: string, threadId: string, pinned: boolean): TaskRecord | null {
+    const task = this.taskByThread(botId, threadId);
+    if (!task || task.autoPinned === pinned) return task ?? null;
+    task.autoPinned = pinned;
+    saveRegistryFor("bots.json", "automatic engine routing pin", () => this.saveBots());
     this.emit({ type: "bot", botId });
     return task;
   }

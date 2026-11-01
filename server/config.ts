@@ -302,6 +302,7 @@ const autoRouteSchema = z.object({
   bots: z.record(z.string().min(1), z.string()),
   engines: z.record(z.string(), z.record(z.string(), defaultModelSelectionSchema)),
   aliases: z.record(z.string(), z.string()).optional(),
+  rutas: z.record(z.string(), z.string().nullable()).optional(),
   timeoutMs: z.number().int().min(500).max(60_000).optional(),
 }).strict().refine((route) => Object.values(route.bots).every((set) => Object.hasOwn(route.engines, set)),
   { message: "Every auto-routed bot needs an engine set from autoRoute.engines", path: ["bots"] });

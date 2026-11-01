@@ -33,6 +33,19 @@ describe("Store", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("persists automatic routing pins without exposing them on the wire", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.setTaskAutoPinned(bot.id, bot.threadId, true);
+    const loaded = new Store(selection);
+    const task = loaded.taskByThread(bot.id, bot.threadId)!;
+    expect(task.autoPinned).toBe(true);
+    expect(toWireTask(task, selection())).not.toHaveProperty("autoPinned");
+    loaded.setTaskAutoPinned(bot.id, bot.threadId, false);
+    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.autoPinned).toBe(false);
+    expect(loaded.setTaskAutoPinned(bot.id, "missing", true)).toBeNull();
+  });
+
   it("retains tool selection across restarts and distinguishes clearing from no tools", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Scoped drafter" });

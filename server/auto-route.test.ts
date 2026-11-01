@@ -60,22 +60,72 @@ describe("engineForChain", () => {
 describe("chooseRoute", () => {
   it("forces without asking the classifier", async () => {
     const fetch = answering({});
-    expect(await chooseRoute("@claude hi", config, { blocked: () => false, fetch })).toEqual({ selection: claude, text: "hi", why: "@claude" });
+    expect(await chooseRoute("@claude hi", config, { pinned: false, blocked: () => false, fetch })).toEqual({ selection: claude, text: "hi", why: "@claude", pin: true });
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps pinned turns without asking the classifier", async () => {
+    const fetch = answering({});
+    expect(await chooseRoute("hi", config, { pinned: true, blocked: () => false, fetch })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await chooseRoute("@gpt hi", config, { pinned: true, blocked: () => false, fetch }))
+      .toEqual({ selection: codex, text: "hi", why: "@chatgpt", pin: true });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("reserves @auto and classifies the same turn", async () => {
+    const fetch = answering({ cadena: ["claude/sonnet"] });
+    expect(await chooseRoute("@AUTO hi", { ...config, aliases: { auto: "chatgpt" } },
+      { pinned: true, blocked: () => false, fetch }))
+      .toEqual({ selection: claude, text: "hi", why: "claude/sonnet", pin: false });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetch.mock.calls[0][1]!.body as string).messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+  it("unpins even when classification fails or a route stays put", async () => {
+    for (const fetch of [answering({}, 503), answering({ ruta: "stay" })]) {
+      expect(await chooseRoute("@auto hi", { ...config, rutas: { stay: null } },
+        { pinned: true, blocked: () => false, fetch })).toEqual({ text: "hi", why: "", pin: false });
+    }
+  });
+  it("prefers listed routes over the provider chain", async () => {
+    const fetch = answering({ ruta: "code", cadena: ["claude/sonnet"], motivo: "coding" });
+    expect(await chooseRoute("hi", { ...config, rutas: { code: "chatgpt" } },
+      { pinned: false, blocked: () => false, fetch }))
+      .toEqual({ selection: codex, text: "hi", why: "code→chatgpt · coding" });
+  });
+  it("stays for null, missing or blocked table engines", async () => {
+    for (const key of [null, "missing", "chatgpt"]) {
+      expect(await chooseRoute("hi", { ...config, rutas: { code: key } },
+        { pinned: false, blocked: (id) => id === "codex", fetch: answering({ ruta: "code", cadena: ["claude/sonnet"] }) })).toBeNull();
+    }
+  });
+  it("uses the chain for an unlisted route", async () => {
+    expect((await chooseRoute("hi", { ...config, rutas: { other: null } },
+      { pinned: false, blocked: () => false, fetch: answering({ ruta: "code", cadena: ["claude/sonnet"] }) }))?.selection).toBe(claude);
+  });
+  it("sends at most four truncated history messages and the current text", async () => {
+    const fetch = answering({ cadena: ["claude/sonnet"] });
+    const history = ["old", "a".repeat(600), { role: "assistant" as const, content: "b".repeat(600) }, "third", "fourth"];
+    await chooseRoute("x".repeat(2500), config, { pinned: false, blocked: () => false, fetch, history });
+    expect(JSON.parse(fetch.mock.calls[0][1]!.body as string).messages).toEqual([
+      { role: "user", content: "a".repeat(500) },
+      { role: "assistant", content: "b".repeat(500) },
+      { role: "user", content: "third" },
+      { role: "user", content: "fourth" },
+      { role: "user", content: "x".repeat(2000) },
+    ]);
   });
   it("sends the token and follows the chain", async () => {
     const fetch = answering({ cadena: ["chatgpt/gpt-6-luna", "claude/sonnet"], ruta: "implementar", nivel: "alta", motivo: "codigo/alta" });
-    const route = await chooseRoute("write a parser", config, { blocked: () => false, fetch, env: { ROUTER_TOKEN: "t" } });
+    const route = await chooseRoute("write a parser", config, { pinned: false, blocked: () => false, fetch, env: { ROUTER_TOKEN: "t" } });
     expect(route).toEqual({ selection: codex, text: "write a parser", why: "chatgpt/gpt-6-luna · codigo/alta" });
     expect(fetch.mock.calls[0][1]).toMatchObject({ headers: { authorization: "Bearer t" } });
   });
   it("names the route and level when there is no reason", async () => {
     const fetch = answering({ cadena: ["groq/llama"], ruta: "charla", nivel: "baja" });
-    expect((await chooseRoute("hi", config, { blocked: () => false, fetch }))?.why).toBe("groq/llama · charla/baja");
+    expect((await chooseRoute("hi", config, { pinned: false, blocked: () => false, fetch }))?.why).toBe("groq/llama · charla/baja");
   });
   it("leaves the thread alone when the classifier fails", async () => {
-    expect(await chooseRoute("hi", config, { blocked: () => false, fetch: answering({}, 503) })).toBeNull();
-    expect(await chooseRoute("hi", config, { blocked: () => false, fetch: vi.fn(async () => { throw new Error("down"); }) })).toBeNull();
-    expect(await chooseRoute("hi", config, { blocked: () => true, fetch: answering({ cadena: ["claude/sonnet"] }) })).toBeNull();
+    expect(await chooseRoute("hi", config, { pinned: false, blocked: () => false, fetch: answering({}, 503) })).toBeNull();
+    expect(await chooseRoute("hi", config, { pinned: false, blocked: () => false, fetch: vi.fn(async () => { throw new Error("down"); }) })).toBeNull();
+    expect(await chooseRoute("hi", config, { pinned: false, blocked: () => true, fetch: answering({ cadena: ["claude/sonnet"] }) })).toBeNull();
   });
 });

@@ -2720,10 +2720,19 @@ function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefau
 }
 
 /** Moves an auto-routed bot's thread to the engine its classifier (or a leading `@alias`) picks; returns the turn's text. */
-async function autoRouteTurn(profile: BotRecord, threadId: string, text: string): Promise<string> {
+async function autoRouteTurn(profile: BotRecord, threadId: string, text: string, currentMessageIds: string[] = []): Promise<string> {
   const config = routeForBot(cfg.autoRoute, profile.name);
   if (!config) return text;
-  const route = await chooseRoute(text, config, { blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled });
+  const messages = store.messagesFor(threadId);
+  const currentIndex = messages.findIndex((message) => currentMessageIds.includes(message.id));
+  const history = (currentIndex < 0 ? messages : messages.slice(0, currentIndex))
+    .filter((message) => message.kind === "text" && (message.role === "user" || message.role === "bot") && message.text)
+    .slice(-4).map((message) => ({ role: message.role === "user" ? "user" as const : "assistant" as const, content: message.text! }));
+  const route = await chooseRoute(text, config, {
+    pinned: store.taskByThread(profile.id, threadId)?.autoPinned === true,
+    history, blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled });
+  if (route?.pin !== undefined) store.setTaskAutoPinned(profile.id, threadId, route.pin);
+  if (!route?.selection) return route?.text ?? text;
   const current = route && store.projectBotForTask(profile.id, threadId);
   if (!route || !current) return route?.text ?? text;
   const { instanceId, model } = current.modelSelection;
@@ -7738,7 +7747,7 @@ async function startTurn(
   healThreadModel(botId, threadId);
   limitFailovers.restore(botId, threadId);
   if (!opts?.commsDepth && !opts?.cardContinuation && !opts?.compactOnly && !opts?.automationSource)
-    text = await autoRouteTurn(profile, threadId, text);
+    text = await autoRouteTurn(profile, threadId, text, [opts?.userMessage?.id, opts?.editedMessageId, ...(opts?.excludeMessageIds ?? [])].filter((id): id is string => Boolean(id)));
   const bot = store.projectBotForTask(botId, threadId);
   if (!bot) throw Object.assign(new Error("no such task"), { status: 404 });
   if (bot.approvalGrant) {
