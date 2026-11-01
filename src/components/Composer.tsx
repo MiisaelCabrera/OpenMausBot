@@ -103,6 +103,7 @@ interface ComposerDraftSnapshot extends ComposerSendSnapshot {
 }
 
 const HANDOFF_REQUEST = "Hand off this thread: bring this project's CONTEXTO.md (and the board, if it applies) up to date so the next session can resume, then reply with the follow-up prompt for the new thread in a single code block, in English: which file to read first, what task comes next, and any decision not written elsewhere.";
+const suggestionAsked = new Set<string>();
 const HANDOFF_FALLBACK = "Read this project's CONTEXTO.md and continue where we left off.";
 
 export function Composer({
@@ -578,6 +579,18 @@ export function Composer({
       dispatch({ type: "send", botId: bot.id, mode: failedMode, ...retry });
     }
   };
+  const [suggestion, setSuggestion] = useState<{ key: string; text: string } | null>(null);
+  const lastText = !group && bot ? visibleMessages(bot).findLast((message) => message.kind === "text" && (message.role === "user" || message.role === "bot")) : undefined;
+  const askKey = lastText?.role === "bot" && !busy && approvals.length === 0 ? lastText.id : undefined;
+  // Ghost text: a guess at the next message, shown as the placeholder of the empty box; Tab or → takes it.
+  const ghost = askKey && suggestion?.key === askKey && !locked ? suggestion.text : "";
+  useEffect(() => {
+    if (!askKey || !bot || suggestionAsked.has(askKey)) return;
+    suggestionAsked.add(askKey);
+    void api<{ text?: string }>(`/api/bots/${bot.id}/suggest`, { method: "POST", body: JSON.stringify({ threadId }) })
+      .then((response) => { if (response?.text) setSuggestion({ key: askKey, text: response.text }); })
+      .catch(() => {});
+  }, [askKey, bot?.id, threadId]);
   const [handoff, setHandoff] = useState<{ botId: string; threadId: string; sawBusy: boolean } | null>(null);
   /** The sidebar's "new thread" for this bot, then switches to it; `seed` goes in as its first message (which also names the thread). */
   const openFreshThread = (seed?: string) => {
@@ -930,6 +943,12 @@ export function Composer({
           onKeyDown={(e) => {
             // An input method's confirming Enter and arrows pick its own candidates, not a mention or command.
             if (imeComposing(e.nativeEvent)) return;
+            if (ghost && !text && (e.key === "Tab" || e.key === "ArrowRight") && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+              e.preventDefault();
+              editText(ghost);
+              setCaret(ghost.length);
+              return;
+            }
             if (commandPickerOpen) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -996,7 +1015,7 @@ export function Composer({
           // is pending.
           disabled={blocking || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
-          placeholder={composerPlaceholder({
+          placeholder={ghost && !text ? ghost : composerPlaceholder({
             simple: !advanced, locked: setupLocked, approval: blocking, attaching: attachmentPending, listening: recording,
             replying: Boolean(replyTo), busy, canSteer, queued: pendingCount > 0, busyName, sendLabel, group, members: members ?? [],
             jevOn: jevRoomRoutingOn(state.config), goal: channelMode === "goal", botName: bot?.name ?? "",

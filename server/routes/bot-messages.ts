@@ -208,6 +208,35 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       store.appendMessage(threadId, { role: "bot", kind: "text", text: answer });
       return json(res, 200, { ok: true });
     }
+    // The ghost text in the composer: one short guess at the person's next message, from a cheap orchestrator role.
+    // Off with OMB_SUGGEST=off; OMB_SUGGEST_SKIP=Name,Name leaves private bots out (their thread never leaves OMB).
+    m = path.match(/^\/api\/bots\/([\w-]+)\/suggest$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const threadId = typeof body?.threadId === "string" ? body.threadId : bot.threadId;
+      if (!store.taskByThread(bot.id, threadId)) return json(res, 404, { error: "no such conversation" });
+      const url = process.env.ORQUESTADOR_URL, token = process.env.ORQUESTADOR_TOKEN ?? process.env.ORQ_TOKEN;
+      const skipped = (process.env.OMB_SUGGEST_SKIP ?? "").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean);
+      if (process.env.OMB_SUGGEST === "off" || !url || !token || skipped.includes(bot.name.toLowerCase())) return json(res, 200, { text: "" });
+      const recent = store.messagesFor(threadId).filter((message) => message.kind === "text" && message.text && (message.role === "user" || message.role === "bot")).slice(-4)
+        .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text!.slice(0, 500)}`).join("\n\n");
+      if (!recent) return json(res, 200, { text: "" });
+      try {
+        const reply = await fetch(`${url.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ model: "rapido", messages: [{ role: "user", content:
+            `${recent}\n\nWrite the single most likely next message the User sends, in the User's language and style, under 12 words. Reply with that message only, or NONE if there is no obvious one.` }] }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        const data = await reply.json() as { choices?: { message?: { content?: string } }[] };
+        const guess = (data.choices?.[0]?.message?.content ?? "").trim().replace(/^["'“]|["'”]$/g, "").split("\n")[0]!.slice(0, 140);
+        return json(res, 200, { text: reply.ok && guess && !/^none\b/i.test(guess) ? guess : "" });
+      } catch {
+        return json(res, 200, { text: "" });
+      }
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages(?:\/(guarded))?$/);
     if (m && method === "POST") {
       const guarded = m[2] === "guarded";
