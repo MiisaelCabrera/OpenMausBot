@@ -292,16 +292,18 @@ function namedApprovalParams(mode: Exclude<ApprovalMode, "custom">): CodexApprov
       },
     };
   }
+  // Where bwrap cannot run (Docker), the container is the sandbox: OMB_CODEX_NO_SANDBOX=1 keeps the approvals and drops workspace-write.
+  const open = process.env.OMB_CODEX_NO_SANDBOX === "1";
   return {
     thread: {
       approvalPolicy: "on-request",
       approvalsReviewer: mode === "auto" ? "auto_review" : "user",
-      sandbox: "workspace-write",
+      sandbox: open ? "danger-full-access" : "workspace-write",
     },
     turn: {
       approvalPolicy: "on-request",
       approvalsReviewer: mode === "auto" ? "auto_review" : "user",
-      sandboxPolicy: { type: "workspaceWrite" },
+      sandboxPolicy: { type: open ? "dangerFullAccess" : "workspaceWrite" },
     },
   };
 }
