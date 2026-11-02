@@ -11,6 +11,7 @@ import type { InstanceConfigMap, ProviderAdapter, RuntimeEvent } from "../contra
 import { readyToRun, selectDefaultModelSelection, type DefaultSelectionContext, type SelectableInstance } from "../default-model-selection.ts";
 import { engineFailureKind } from "../drivers/engine-errors.ts";
 import { classifyError } from "../drivers/retry.ts";
+import { codexTier } from "../auto-route.ts";
 import { billsEachUse, failoverLine, limitBackupAllowed, signedOutLine, type LimitFailover } from "../limit-failover.ts";
 import { LimitNotices, limitNoticeText, signedOutNoticeText } from "../limit-notices.ts";
 import { UNNAMED_LIMIT_MS } from "../limit-resets.ts";
@@ -172,7 +173,7 @@ export function createLimitTakeover(deps: LimitTakeoverDeps) {
    * its default model (a model the person picked stays) and the engine offers that tier. */
   function equivalentModel(model: string, selection: ModelSelection, engine?: TakeoverEngine): ModelSelection {
     if (!engine || (engine.driverKind !== "codex" && engine.driverKind !== "customAcp") || selection.model !== engine.models.default) return selection;
-    const tier = /opus|fable/i.test(model) ? "gpt-6.1-sol" : /sonnet|haiku/i.test(model) ? "gpt-6.1-terra" : undefined;
+    const tier = codexTier(model);
     return tier && engine.models.options.some((option) => option.id === tier) ? { instanceId: selection.instanceId, model: tier } : selection;
   }
 

@@ -2730,7 +2730,9 @@ async function autoRouteTurn(profile: BotRecord, threadId: string, text: string,
     .slice(-4).map((message) => ({ role: message.role === "user" ? "user" as const : "assistant" as const, content: message.text! }));
   const route = await chooseRoute(text, config, {
     pinned: store.taskByThread(profile.id, threadId)?.autoPinned === true,
-    history, blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled });
+    history, blocked: (engine) => limitClock.blockedUntil(engine) !== null || !registry.get(engine)?.enabled,
+    currentModel: store.projectBotForTask(profile.id, threadId)?.modelSelection.model,
+    offers: (engine, model) => Boolean(registry.get(engine)?.models.options.some((option) => option.id === model)) });
   if (route?.pin !== undefined) store.setTaskAutoPinned(profile.id, threadId, route.pin);
   if (!route?.selection) return route?.text ?? text;
   const current = route && store.projectBotForTask(profile.id, threadId);

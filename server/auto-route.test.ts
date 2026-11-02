@@ -128,4 +128,17 @@ describe("chooseRoute", () => {
     expect(await chooseRoute("hi", config, { pinned: false, blocked: () => false, fetch: vi.fn(async () => { throw new Error("down"); }) })).toBeNull();
     expect(await chooseRoute("hi", config, { pinned: false, blocked: () => true, fetch: answering({ cadena: ["claude/sonnet"] }) })).toBeNull();
   });
+  it("maps the thread's Claude tier to Codex's when routing to chatgpt", async () => {
+    const offers = () => true;
+    const fetch = () => answering({ ruta: "implementar", nivel: "alta" });
+    const routed = { ...config, rutas: { implementar: "chatgpt" } };
+    const pick = async (currentModel?: string, opts: object = { offers }) =>
+      (await chooseRoute("write a parser", routed, { pinned: false, blocked: () => false, fetch: fetch(), currentModel, ...opts }))?.selection?.model;
+    expect(await pick("claude-sonnet-5")).toBe("gpt-6.1-terra");
+    expect(await pick("claude-opus-5-5")).toBe("gpt-6.1-sol");
+    expect(await pick("gpt-6.1-sol")).toBe("gpt-6.1-terra"); // thread elsewhere: the set's own Claude (Sonnet)
+    expect(await pick("claude-opus-5-5", { offers: () => false })).toBe("gpt-6-luna");
+    const forced = await chooseRoute("@gpt hi", routed, { pinned: false, blocked: () => false, currentModel: "claude-opus-5", offers });
+    expect(forced?.selection?.model).toBe("gpt-6.1-sol");
+  });
 });

@@ -56,10 +56,26 @@ export function engineForChain(chain: string[], config: BotRoute, blocked: (inst
   return null;
 }
 
+/** Codex's tier standing in for a Claude model: Terra for Sonnet and Haiku, Sol for Opus and Fable. */
+export function codexTier(claudeModel: string): string | undefined {
+  return /opus|fable/i.test(claudeModel) ? "gpt-6.1-sol" : /sonnet|haiku/i.test(claudeModel) ? "gpt-6.1-terra" : undefined;
+}
+
+/** The `chatgpt` engine on the tier matching the thread's Claude model (the set's own Claude when the thread is elsewhere), when it offers it. */
+function chatgptTier(selection: ModelSelection, config: BotRoute, deps: { currentModel?: string; offers?: (instanceId: string, model: string) => boolean }): ModelSelection {
+  if (selection !== config.engines.chatgpt) return selection;
+  const claude = /claude/i.test(deps.currentModel ?? "") ? deps.currentModel! : config.engines.claude?.model ?? "";
+  const tier = codexTier(claude);
+  return tier && deps.offers?.(selection.instanceId, tier) ? { instanceId: selection.instanceId, model: tier } : selection;
+}
+
 /** A route or pin change; null leaves the thread and its pin unchanged. */
 export async function chooseRoute(text: string, config: BotRoute, deps: {
   blocked: (instanceId: string) => boolean;
   pinned: boolean;
+  /** The thread's model now, and whether an engine offers a model: Auto maps Claude's tiers to Codex's. */
+  currentModel?: string;
+  offers?: (instanceId: string, model: string) => boolean;
   history?: Array<string | { role: "user" | "assistant"; content: string }>;
   fetch?: typeof fetch;
   env?: NodeJS.ProcessEnv;
@@ -68,7 +84,7 @@ export async function chooseRoute(text: string, config: BotRoute, deps: {
   if (auto) text = text.slice(auto[0].length);
   const unchanged: RouteChoice | null = auto ? { text, why: "", pin: false } : null;
   const forced = auto ? null : forcedEngine(text, config);
-  if (forced) return { selection: config.engines[forced.key], text: forced.text, why: `@${forced.key}`, pin: true };
+  if (forced) return { selection: chatgptTier(config.engines[forced.key], config, deps), text: forced.text, why: `@${forced.key}`, pin: true };
   if (deps.pinned && !auto) return null;
   const token = config.tokenEnv ? (deps.env ?? process.env)[config.tokenEnv] : undefined;
   try {
@@ -95,7 +111,7 @@ export async function chooseRoute(text: string, config: BotRoute, deps: {
     const str = (part: unknown) => typeof part === "string" && part ? part : "";
     const why = [picked?.entry, str(answer.motivo) || [answer.ruta, answer.nivel].map(str).filter(Boolean).join("/")]
       .filter(Boolean).join(" · ");
-    return picked ? { selection: picked.selection, text, why, ...(auto ? { pin: false } : {}) } : unchanged;
+    return picked ? { selection: chatgptTier(picked.selection, config, deps), text, why, ...(auto ? { pin: false } : {}) } : unchanged;
   } catch {
     return unchanged;
   }
