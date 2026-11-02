@@ -24,6 +24,7 @@ const support: AcpSupport = {
   resolveModelsOnCreate: false,
   selectModel: { configId: "model", agentDefault: "agent-default", allowLegacy: true },
   modelVariants: true,
+  phoneMcp: true,
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: () => true,

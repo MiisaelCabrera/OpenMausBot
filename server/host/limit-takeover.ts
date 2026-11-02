@@ -168,6 +168,14 @@ export function createLimitTakeover(deps: LimitTakeoverDeps) {
     return engine.models.default === selection.model || engine.models.options.some((model) => model.id === selection.model);
   };
 
+  /** Codex's tiers stand in for Claude's: Terra for Sonnet and Haiku, Sol for Opus and Fable. Only when the backup is left on
+   * its default model (a model the person picked stays) and the engine offers that tier. */
+  function equivalentModel(model: string, selection: ModelSelection, engine?: TakeoverEngine): ModelSelection {
+    if (!engine || (engine.driverKind !== "codex" && engine.driverKind !== "customAcp") || selection.model !== engine.models.default) return selection;
+    const tier = /opus|fable/i.test(model) ? "gpt-6.1-sol" : /sonnet|haiku/i.test(model) ? "gpt-6.1-terra" : undefined;
+    return tier && engine.models.options.some((option) => option.id === tier) ? { instanceId: selection.instanceId, model: tier } : selection;
+  }
+
   /** The AIs that may carry on while `from` is limited or signed out, best first: for one model's limit the same AI's own
    * default model, then the backups the person chose, then (for a limit) the AI MausBot would pick for a new bot among
    * the rest that draw on a plan. One that bills each use spends the person's money, so it carries on only as a backup
@@ -177,7 +185,8 @@ export function createLimitTakeover(deps: LimitTakeoverDeps) {
     const current = engines.find((engine) => engine.instanceId === from.instanceId);
     if (!current) return [];
     const out: ModelSelection[] = [];
-    const add = (selection: ModelSelection) => {
+    const add = (chosen: ModelSelection) => {
+      const selection = equivalentModel(from.model, chosen, engines.find((engine) => engine.instanceId === chosen.instanceId));
       if (selection.instanceId === from.instanceId && (scope === "engine" || scope === "signed-out" || selection.model === from.model)) return;
       if (out.some((known) => known.instanceId === selection.instanceId && known.model === selection.model)) return;
       if (usable(engines, current, selection, scope, approval)) out.push({ instanceId: selection.instanceId, model: selection.model });

@@ -115,6 +115,8 @@ export interface AcpSupport {
   nativeSource: string;
   /** Whether models behind this CLI can consume a referenced image. */
   images?: boolean;
+  /** Declares phoneMcp, so a custom engine standing in for Claude/Codex passes the recovery capability check. */
+  phoneMcp?: boolean;
   /** Narrow compatibility exception for a CLI with verified native image
    * transport but a defective initialize capability (never a path fallback). */
   acceptsUnadvertisedImages?(initializeResult: unknown): boolean;
@@ -1709,7 +1711,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             nativeImageInput: support.images === true,
             effortLevels: support.effortLevels,
             modelVariants: support.modelVariants === true,
-            localComputerMcp: true,
+            localComputerMcp: true, ...(support.phoneMcp ? { phoneMcp: true } : {}),
             contextReading: "meter",
             engineAdmission: true, ...(support.askTool ? { askTool: { kind: "native" as const, name: support.askTool } } : {}),
           },
