@@ -8,6 +8,7 @@ import { normalizeReaction, reactionAnswer } from "../../shared/reactions.ts";
 import type { WidgetAction } from "../../shared/widget.ts";
 import type { ResolvedSender, SteerQueueReason } from "../../shared/wire.ts";
 import { admit } from "../admission.ts";
+import { bangCommand, bangRemote, bangReply, runBang } from "../bang-command.ts";
 import { dismissQuestionCard } from "../card-dismissal.ts";
 import { AppMessageRate, appContextBlock, prepareAppMessage } from "../chat-apps.ts";
 import { prepareWidgetPress, reopenCancelledPress } from "../chat-widgets.ts";
@@ -297,6 +298,23 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
         : usageTriggerFor(auth);
       // Security invariant: another bot's thread answers like a missing one, before anything reads a widget in it.
       if (pressed && !store.taskByThread(bot.id, threadId)) return json(res, 409, { error: "the bot switched tasks before it could receive the message" });
+      // `!command`: a present person's typed line runs as shell in the thread's folder, no model turn (see bang-command.ts).
+      const bang = !guarded && !pressed && !fromAnApp && !pointing && (auth.kind === "session" || DESKTOP_MANAGED) ? bangCommand(typed) : null;
+      if (bang) {
+        const task = store.taskByThread(bot.id, threadId);
+        if (!task) return json(res, 404, { error: "no such conversation" });
+        const bangRefused = directSendRefusal(bot.id, threadId);
+        if (bangRefused) return json(res, bangRefused.status, bangRefused.body);
+        const cwd = task.cwd !== undefined ? task.cwd : bot.cwd;
+        if (!cwd) return json(res, 400, { error: "this bot has no working folder, so ! commands cannot run" });
+        const bangSendId = parseSendId(body.sendId);
+        const prior = bangSendId ? store.messagesFor(threadId).find((line) => line.sendId === bangSendId) : undefined;
+        if (prior) return json(res, 202, { ok: true, threadId, message: prior });
+        const message = store.appendMessage(threadId, { role: "user", kind: "text", text: typed, sendId: bangSendId, sender: messageSender(auth) });
+        const remote = bangRemote(store.projectBotForTask(bot.id, threadId)?.modelSelection.instanceId);
+        void runBang(bang, cwd, remote).then((result) => store.appendMessage(threadId, { role: "bot", kind: "text", text: bangReply(bang, result) }));
+        return json(res, 202, { ok: true, threadId, message });
+      }
       const phone = fromPhone(auth);
       // A phone's send without an id gets one, so the turn it starts can be known as the phone's.
       const sendId = parseSendId(body.sendId) ?? (phone ? randomUUID() : undefined);
