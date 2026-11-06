@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { CustomAcpDriver } from "./custom.ts";
+import { CustomAcpDriver, configureCustomMode } from "./custom.ts";
+import { supportsApprovalMode } from "../../../shared/approval-mode.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -126,4 +127,24 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     const snapshot = await instance.snapshot();
     expect(snapshot).toMatchObject({ state: "available" });
   });
+});
+
+describe("configureCustomMode", () => {
+  const mode = (currentValue: string, values = ["default", "auto_edit", "yolo"]) => ({ id: "mode", currentValue, options: values.map((value) => ({ value })) });
+  const run = async (approvalMode: string, configOptions: any[]) => {
+    const calls: any[] = [];
+    await configureCustomMode({ request: async (m: string, p: any) => void calls.push([m, p]), sessionId: "s", turn: { approvalMode }, configOptions } as any);
+    return calls;
+  };
+  it("asks auto_edit for edits and restores default otherwise", async () => {
+    expect(await run("edits", [mode("default")])).toEqual([["session/set_config_option", { sessionId: "s", configId: "mode", value: "auto_edit" }]]);
+    expect(await run("auto", [mode("auto_edit")])).toEqual([["session/set_config_option", { sessionId: "s", configId: "mode", value: "default" }]]);
+    expect(await run("edits", [mode("auto_edit")])).toEqual([]);
+  });
+  it("does nothing without a mode option or without auto_edit (Codex ACP)", async () => {
+    expect(await run("edits", [])).toEqual([]);
+    expect(await run("edits", [{ id: "model", currentValue: "x", options: [] }])).toEqual([]);
+    expect(await run("edits", [mode("read-only", ["read-only", "full-access"])])).toEqual([]);
+  });
+  it("customAcp supports edits", () => expect(supportsApprovalMode("customAcp", "edits")).toBe(true));
 });

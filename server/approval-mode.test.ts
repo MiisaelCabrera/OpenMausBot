@@ -35,7 +35,7 @@ describe("approval modes", () => {
       expect(supportsApprovalMode(driver, "custom")).toBe(driver === "codex");
       // Qwen's `--approval-mode auto` is an LLM classifier; Gemini has no reviewer
       expect(hasNativeAutoReview(driver)).toBe(["codex", "claudeAgent", "cursorAgent", "grokAgent", "qwenAgent"].includes(driver));
-      expect(supportsApprovalMode(driver, "edits")).toBe(["claudeAgent", "grokAgent", "antigravityAgent", "qwenAgent", "geminiAgent"].includes(driver));
+      expect(supportsApprovalMode(driver, "edits")).toBe(["claudeAgent", "grokAgent", "antigravityAgent", "qwenAgent", "geminiAgent", "customAcp"].includes(driver));
     }
     expect(supportsApprovalMode(undefined, "full")).toBe(true);
     expect(supportsApprovalMode(undefined, "edits")).toBe(false);
@@ -48,7 +48,7 @@ describe("approval modes", () => {
   // No permissive mode of their own: the harness answers the permission
   // requests they leave, so Full runs there too.
   it.each([
-    "kimiAgent", "droidAgent", "hermesAgent", "customAcp",
+    "kimiAgent", "droidAgent", "hermesAgent",
     "piAgent", "unknown",
   ])("runs Full on %s without claiming native Auto or Edits", (driver) => {
     expect(supportsApprovalMode(driver, "ask")).toBe(true);
