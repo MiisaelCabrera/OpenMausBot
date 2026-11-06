@@ -38,14 +38,24 @@ function modeValues(option: any): string[] {
   return Array.isArray(option?.options) ? flat(option.options) : [];
 }
 
-/** Engines offering a `mode` option with `auto_edit` (Antigravity/Gemini) get the edits level; others (Codex ACP) are left alone. */
+/** The elevated `mode` values an engine may offer, by approval level: Gemini/Antigravity `auto_edit` and `yolo`, Codex ACP `agent-full-access`. */
+const ELEVATED_MODES = ["auto_edit", "yolo", "agent-full-access"];
+
+/** Engines offering a `mode` option get the level that fits: edits → `auto_edit`, Full → `yolo` / `agent-full-access`
+ * (what a bot at Full was promised; Codex ACP otherwise stays in its `workspace-write` sandbox); any other level restores
+ * the engine's default (`default` or `workspace-write`). Never touches `agent` (Codex's Guardian reviewer); no `mode`
+ * option, or none of these values, is a no-op. */
 export async function configureCustomMode(
   { request, sessionId, turn, configOptions }: Parameters<NonNullable<AcpSupport["configureSession"]>>[0],
 ): Promise<void> {
   const option: any = configOptions.find((o) => o?.id === "mode");
   const values = modeValues(option);
-  if (!values.includes("auto_edit")) return;
-  const wanted = turn.approvalMode === "edits" ? "auto_edit" : values.includes("default") ? "default" : values.find((v) => v !== "auto_edit");
+  const elevated = values.filter((v) => ELEVATED_MODES.includes(v));
+  if (!elevated.length) return;
+  const level = turn.approvalMode;
+  const wanted = level === "edits" ? elevated.find((v) => v === "auto_edit")
+    : level === "full" ? elevated.find((v) => v === "yolo" || v === "agent-full-access")
+    : values.find((v) => v === "default") ?? values.find((v) => v === "workspace-write");
   if (!wanted || option.currentValue === wanted) return;
   await request("session/set_config_option", { sessionId, configId: "mode", value: wanted });
 }

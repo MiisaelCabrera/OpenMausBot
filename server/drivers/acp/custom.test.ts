@@ -131,20 +131,31 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
 
 describe("configureCustomMode", () => {
   const mode = (currentValue: string, values = ["default", "auto_edit", "yolo"]) => ({ id: "mode", currentValue, options: values.map((value) => ({ value })) });
+  const codex = (currentValue: string) => mode(currentValue, ["read-only", "workspace-write", "agent", "agent-full-access"]);
+  const set = (value: string) => [["session/set_config_option", { sessionId: "s", configId: "mode", value }]];
   const run = async (approvalMode: string, configOptions: any[]) => {
     const calls: any[] = [];
     await configureCustomMode({ request: async (m: string, p: any) => void calls.push([m, p]), sessionId: "s", turn: { approvalMode }, configOptions } as any);
     return calls;
   };
-  it("asks auto_edit for edits and restores default otherwise", async () => {
-    expect(await run("edits", [mode("default")])).toEqual([["session/set_config_option", { sessionId: "s", configId: "mode", value: "auto_edit" }]]);
-    expect(await run("auto", [mode("auto_edit")])).toEqual([["session/set_config_option", { sessionId: "s", configId: "mode", value: "default" }]]);
+  it("Gemini: edits → auto_edit, full → yolo, anything else restores default", async () => {
+    expect(await run("edits", [mode("default")])).toEqual(set("auto_edit"));
+    expect(await run("full", [mode("default")])).toEqual(set("yolo"));
+    expect(await run("auto", [mode("auto_edit")])).toEqual(set("default"));
+    expect(await run("ask", [mode("yolo")])).toEqual(set("default"));
     expect(await run("edits", [mode("auto_edit")])).toEqual([]);
+    expect(await run("full", [mode("yolo")])).toEqual([]);
   });
-  it("does nothing without a mode option or without auto_edit (Codex ACP)", async () => {
-    expect(await run("edits", [])).toEqual([]);
+  it("Codex ACP: full → agent-full-access, other levels back to workspace-write, never agent", async () => {
+    expect(await run("full", [codex("workspace-write")])).toEqual(set("agent-full-access"));
+    expect(await run("auto", [codex("agent-full-access")])).toEqual(set("workspace-write"));
+    expect(await run("auto", [codex("workspace-write")])).toEqual([]);
+    expect(await run("edits", [codex("workspace-write")])).toEqual([]);
+  });
+  it("does nothing without a mode option or without elevated values", async () => {
+    expect(await run("full", [])).toEqual([]);
     expect(await run("edits", [{ id: "model", currentValue: "x", options: [] }])).toEqual([]);
-    expect(await run("edits", [mode("read-only", ["read-only", "full-access"])])).toEqual([]);
+    expect(await run("full", [mode("read-only", ["read-only", "workspace-write"])])).toEqual([]);
   });
   it("customAcp supports edits", () => expect(supportsApprovalMode("customAcp", "edits")).toBe(true));
 });
